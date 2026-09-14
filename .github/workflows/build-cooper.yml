@@ -1,0 +1,97 @@
+name: Build AOSP Gingerbread para cooper
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350   # el limite duro de Actions son 6 h
+
+    steps:
+      - name: Checkout (para tomar Dockerfile y scripts)
+        uses: actions/checkout@v4
+        with:
+          path: ci
+
+      - name: Liberar espacio en disco
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 4096
+          temp-reserve-mb: 100
+          swap-size-mb: 4096
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'false'   # necesitamos docker
+          build-mount-path: '/aosp'
+
+      - name: Permisos sobre /aosp
+        run: sudo chown -R $USER:$USER /aosp && df -h /aosp
+
+      - name: Instalar repo
+        run: |
+          mkdir -p ~/bin
+          curl -s https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          git config --global user.name  "builder"
+          git config --global user.email "builder@example.com"
+
+      - name: repo init + local_manifest
+        working-directory: /aosp
+        run: |
+          export PATH=~/bin:$PATH
+          repo init -u https://android.googlesource.com/platform/manifest \
+                    -b gingerbread-release --depth=1
+          mkdir -p .repo/local_manifests
+          cp $GITHUB_WORKSPACE/ci/local_manifest.xml .repo/local_manifests/cooper.xml
+
+      - name: repo sync
+        working-directory: /aosp
+        run: |
+          export PATH=~/bin:$PATH
+          repo sync -c -j8 --no-tags --no-clone-bundle --force-sync
+          df -h /aosp
+
+      - name: Parchear el arbol para cooper
+        working-directory: /aosp
+        run: bash $GITHUB_WORKSPACE/ci/prepare-cooper.sh
+
+      - name: Cache de ccache
+        uses: actions/cache@v4
+        with:
+          path: /aosp/ccache
+          key: ccache-cooper-${{ github.run_id }}
+          restore-keys: ccache-cooper-
+
+      - name: Construir imagen del toolchain viejo
+        run: docker build -t gingerbread-builder $GITHUB_WORKSPACE/ci
+
+      - name: Compilar
+        working-directory: /aosp
+        run: |
+          mkdir -p ccache
+          docker run --rm \
+            -v /aosp:/src -v /aosp/ccache:/ccache \
+            gingerbread-builder \
+            bash -c '
+              cd /src
+              . build/envsetup.sh
+              lunch cooper-eng
+              prebuilts/misc/linux-x86/ccache/ccache -M 5G 2>/dev/null || true
+              make -j$(nproc) otapackage
+            '
+
+      - name: Limpiar intermedios antes de subir
+        if: always()
+        run: rm -rf /aosp/out/target/product/cooper/obj /aosp/out/host || true
+
+      - name: Subir resultado
+        uses: actions/upload-artifact@v4
+        with:
+          name: cooper-gingerbread
+          path: |
+            /aosp/out/target/product/cooper/*.zip
+            /aosp/out/target/product/cooper/*.img
+          if-no-files-found: warn
