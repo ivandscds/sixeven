@@ -133,14 +133,18 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 marker = "\tcopybit.qsd8k \\\n"
-extra = "\tcopybit.qsd8k \\\n\tcopybit.msm7k \\\n"
-if "copybit.msm7k" not in content:
+# Lista de modulos de hardware/msm7k que van apareciendo sin tag al ir
+# avanzando el build. Agregar mas nombres a esta tupla cuando el log de
+# Actions muestre un nuevo "*** Module name: X".
+faltantes = ["copybit.msm7k", "lights.msm7k"]
+extra = marker + "".join(f"\t{m} \\\n" for m in faltantes if m not in content)
+if extra != marker:
     content = content.replace(marker, extra, 1)
     with open(path, "w") as f:
         f.write(content)
-    print("    agregado copybit.msm7k a GRANDFATHERED_USER_MODULES")
+    print(f"    agregados a GRANDFATHERED_USER_MODULES: {[m for m in faltantes if m in extra]}")
 else:
-    print("    copybit.msm7k ya estaba en la lista, no se toca")
+    print("    nada nuevo para agregar")
 PYEOF
 
 echo ">>> 4/5  Aligerando el build para maquinas con poca RAM"
