@@ -63,7 +63,7 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/generic.mk)
 EOF
 
-echo ">>> 1/3  Agregando la variante de arquitectura armv6-vfp"
+echo ">>> 1/5  Agregando la variante de arquitectura armv6-vfp"
 # AOSP gingerbread solo trae armv4t, armv5te, armv5te-vfp, armv7-a y armv7-a-neon.
 # El Ace declara TARGET_ARCH_VARIANT := armv6-vfp, que lo agrego CyanogenMod.
 # Sin este archivo el build muere con "Cannot locate config makefile for
@@ -97,7 +97,7 @@ arch_variant_cflags := \
     -D__ARM_ARCH_5TE__
 EOF
 
-echo ">>> 2/3  Sacando paquetes que solo existen en CyanogenMod"
+echo ">>> 2/5  Sacando paquetes que solo existen en CyanogenMod"
 # Estas apps/binarios viven en repos de CM (packages/apps/FM, Torch,
 # SamsungServiceMode, system/extras/rzscontrol). En AOSP puro no existen y el
 # build falla con "Module not defined".
@@ -109,15 +109,73 @@ done
 # BOARD_USE_SCREENCAP es un hook de CM, en AOSP no hace nada pero lo sacamos
 sed -i 's/^BOARD_USE_SCREENCAP/#BOARD_USE_SCREENCAP/' device/samsung/cooper/BoardConfig.mk
 
-echo ">>> 3/3  Listo. Paquetes removidos de PRODUCT_PACKAGES:"
+echo ">>> 3/5  Perdonando modulos viejos de hardware/msm7k sin LOCAL_MODULE_TAGS"
+# hardware/msm7k se sincroniza porque el manifest default de AOSP lo trae para
+# otros telefonos msm7k viejos (Nexus One, HTC Dream). Cooper NO lo usa para
+# nada en runtime (usa copybit.cooper, gralloc.cooper propios), PERO su propio
+# device/samsung/cooper/libcopybit SI necesita los headers de
+# hardware/msm7k/libgralloc para compilar (ver LOCAL_C_INCLUDES en su Android.mk).
+#
+# Por eso: NO borrar ni tocar hardware/msm7k. La forma correcta de arreglar el
+# error "user tag detected on new module" de copybit.msm7k es "perdonarlo" en
+# la lista GRANDFATHERED_USER_MODULES (mismo mecanismo que ya usa AOSP para
+# copybit.qsd8k). Esto no cambia si el modulo se instala o no -- copybit.cooper
+# se sigue resolviendo primero en runtime via ro.product.board -- solo hace
+# que "make" no aborte al parsear su Android.mk.
+#
+# Si aparecen mas errores iguales para otros modulos de hardware/msm7k
+# (libcamera, libaudio, etc.), agregalos a esta misma lista.
+UT=build/core/user_tags.mk
+cp -n $UT $UT.orig
+python3 - "$UT" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+marker = "\tcopybit.qsd8k \\\n"
+extra = "\tcopybit.qsd8k \\\n\tcopybit.msm7k \\\n"
+if "copybit.msm7k" not in content:
+    content = content.replace(marker, extra, 1)
+    with open(path, "w") as f:
+        f.write(content)
+    print("    agregado copybit.msm7k a GRANDFATHERED_USER_MODULES")
+else:
+    print("    copybit.msm7k ya estaba en la lista, no se toca")
+PYEOF
+
+echo ">>> 4/5  Aligerando el build para maquinas con poca RAM"
+# Solo se aplica si se corre con LOW_RAM=1, para no tocar nada en el runner
+# de GitHub Actions (que tiene 16 GB y no lo necesita).
+if [ "${LOW_RAM:-0}" = "1" ]; then
+    echo "    - Sacando Browser de core.mk (evita compilar/linkear external/webkit,"
+    echo "      el modulo que mas RAM pide en todo el arbol)"
+    sed -i '/^    Browser \\$/d' build/target/product/core.mk
+
+    echo "    - Achicando la lista de idiomas a uno solo (en_US)"
+    sed -i \
+      's|\$(call inherit-product, \$(SRC_TARGET_DIR)/product/languages_full.mk)|\$(call inherit-product, \$(SRC_TARGET_DIR)/product/languages_small.mk)|' \
+      build/target/product/full_base.mk
+
+    echo "    - Sin Browser habilitado (evita OOM en el link de webkit)"
+else
+    echo "    (LOW_RAM no esta en 1, no se toca nada; usar LOW_RAM=1 bash prepare-cooper.sh en PCs con <4 GB de RAM)"
+fi
+
+echo ">>> 5/5  Listo. Paquetes removidos de PRODUCT_PACKAGES:"
 diff $DEV.orig $DEV || true
 
 cat <<'EOF'
 
-Siguiente paso:
+Siguiente paso en una PC potente / runner de Actions:
   . build/envsetup.sh
   lunch cooper-eng
   make -j$(nproc) otapackage
+
+Siguiente paso en una PC con poca RAM (ej. Pentium E5400 + 2 GB):
+  export LOW_RAM=1 && bash prepare-cooper.sh   # si todavia no lo corriste asi
+  . build/envsetup.sh
+  lunch cooper-user       # variant "user", no "eng": menos paquetes de debug
+  make -j1 systemimage bootimage   # sin otapackage: no arma recovery ni firma OTA
 
 Si falla por "libOmxCore" o "libOmxVidEnc", sacalos tambien de
 device/samsung/cooper/device_cooper.mk: son modulos que CM construia desde su
