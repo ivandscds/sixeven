@@ -109,42 +109,47 @@ done
 # BOARD_USE_SCREENCAP es un hook de CM, en AOSP no hace nada pero lo sacamos
 sed -i 's/^BOARD_USE_SCREENCAP/#BOARD_USE_SCREENCAP/' device/samsung/cooper/BoardConfig.mk
 
-echo ">>> 3/5  Perdonando modulos viejos de hardware/msm7k sin LOCAL_MODULE_TAGS"
-# hardware/msm7k se sincroniza porque el manifest default de AOSP lo trae para
-# otros telefonos msm7k viejos (Nexus One, HTC Dream). Cooper NO lo usa para
-# nada en runtime (usa copybit.cooper, gralloc.cooper propios), PERO su propio
-# device/samsung/cooper/libcopybit SI necesita los headers de
-# hardware/msm7k/libgralloc para compilar (ver LOCAL_C_INCLUDES en su Android.mk).
+echo ">>> 3/5  Silenciando el chequeo de tags para TODO hardware/msm7k"
+# hardware/msm7k se sincroniza de arrastre porque el manifest default de AOSP
+# lo trae para otros telefonos msm7k viejos (Nexus One, HTC Dream). Cooper NO
+# usa en runtime NINGUN modulo de esa carpeta (usa copybit.cooper,
+# lights.cooper, gralloc.cooper propios), pero SI necesita que la carpeta siga
+# estando en el arbol, porque su propio device/samsung/cooper/libcopybit
+# incluye headers de hardware/msm7k/libgralloc para compilar.
 #
-# Por eso: NO borrar ni tocar hardware/msm7k. La forma correcta de arreglar el
-# error "user tag detected on new module" de copybit.msm7k es "perdonarlo" en
-# la lista GRANDFATHERED_USER_MODULES (mismo mecanismo que ya usa AOSP para
-# copybit.qsd8k). Esto no cambia si el modulo se instala o no -- copybit.cooper
-# se sigue resolviendo primero en runtime via ro.product.board -- solo hace
-# que "make" no aborte al parsear su Android.mk.
+# El problema es que hardware/msm7k es una carpeta vieja con VARIOS modulos
+# (copybit, lights, gralloc, camara, audio...) que nunca declaran
+# LOCAL_MODULE_TAGS, y el "user_tags.mk" original solo perdona algunos de
+# ellos por nombre (ej. copybit.qsd8k), asi que van saltando de a uno segun
+# el orden en que "make" los va parseando.
 #
-# Si aparecen mas errores iguales para otros modulos de hardware/msm7k
-# (libcamera, libaudio, etc.), agregalos a esta misma lista.
-UT=build/core/user_tags.mk
-cp -n $UT $UT.orig
-python3 - "$UT" <<'PYEOF'
+# En vez de ir agregando nombres a mano cada vez que aparece un error nuevo,
+# parcheamos build/core/base_rules.mk para que perdone TODO lo que venga con
+# LOCAL_PATH bajo hardware/msm7k, ademas de lo que ya estaba perdonado por
+# nombre. Esto no cambia si esos modulos se instalan o no -- ninguno esta en
+# PRODUCT_PACKAGES de cooper, asi que nunca terminan en el system.img -- solo
+# evita que "make" aborte al parsear sus Android.mk.
+BR=build/core/base_rules.mk
+cp -n $BR $BR.orig
+python3 - "$BR" <<'PYEOF'
 import sys
 path = sys.argv[1]
 with open(path) as f:
     content = f.read()
-marker = "\tcopybit.qsd8k \\\n"
-# Lista de modulos de hardware/msm7k que van apareciendo sin tag al ir
-# avanzando el build. Agregar mas nombres a esta tupla cuando el log de
-# Actions muestre un nuevo "*** Module name: X".
-faltantes = ["copybit.msm7k", "lights.msm7k"]
-extra = marker + "".join(f"\t{m} \\\n" for m in faltantes if m not in content)
-if extra != marker:
-    content = content.replace(marker, extra, 1)
+old = "  ifeq ($(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),)"
+new = "  ifeq ($(or $(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),$(filter hardware/msm7k%,$(LOCAL_PATH))),)"
+n = content.count(old)
+if n == 1:
+    content = content.replace(old, new, 1)
     with open(path, "w") as f:
         f.write(content)
-    print(f"    agregados a GRANDFATHERED_USER_MODULES: {[m for m in faltantes if m in extra]}")
+    print("    parche aplicado: hardware/msm7k queda exento del chequeo de tags")
+elif new in content:
+    print("    ya estaba parcheado, no se toca")
 else:
-    print("    nada nuevo para agregar")
+    print(f"    ADVERTENCIA: no encontre el patron esperado ({n} coincidencias)."
+          " Revisar build/core/base_rules.mk a mano.", file=sys.stderr)
+    sys.exit(1)
 PYEOF
 
 echo ">>> 4/5  Aligerando el build para maquinas con poca RAM"
