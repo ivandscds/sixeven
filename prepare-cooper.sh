@@ -109,26 +109,26 @@ done
 # BOARD_USE_SCREENCAP es un hook de CM, en AOSP no hace nada pero lo sacamos
 sed -i 's/^BOARD_USE_SCREENCAP/#BOARD_USE_SCREENCAP/' device/samsung/cooper/BoardConfig.mk
 
-echo ">>> 3/6  Silenciando el chequeo de tags para TODO hardware/msm7k"
-# hardware/msm7k se sincroniza de arrastre porque el manifest default de AOSP
-# lo trae para otros telefonos msm7k viejos (Nexus One, HTC Dream). Cooper NO
-# usa en runtime NINGUN modulo de esa carpeta (usa copybit.cooper,
-# lights.cooper, gralloc.cooper propios), pero SI necesita que la carpeta siga
-# estando en el arbol, porque su propio device/samsung/cooper/libcopybit
-# incluye headers de hardware/msm7k/libgralloc para compilar.
+echo ">>> 3/6  Silenciando el chequeo de tags para hardware/msm7k y hardware/qcom"
+# hardware/msm7k y hardware/qcom se sincronizan de arrastre porque el manifest
+# default de AOSP los trae para otros telefonos msm7k viejos (Nexus One, HTC
+# Dream) y para el driver de GPS de Qualcomm (hardware/qcom/gps, que SI usa
+# cooper via BOARD_GPS_LIBRARIES := libloc_api en BoardConfig.mk).
 #
-# El problema es que hardware/msm7k es una carpeta vieja con VARIOS modulos
-# (copybit, lights, gralloc, camara, audio...) que nunca declaran
-# LOCAL_MODULE_TAGS, y el "user_tags.mk" original solo perdona algunos de
-# ellos por nombre (ej. copybit.qsd8k), asi que van saltando de a uno segun
-# el orden en que "make" los va parseando.
+# Cooper no reemplaza el GPS con nada propio (a diferencia de audio/copybit/
+# lights/gralloc), asi que gps.cooper de hardware/qcom/gps/loc_api SI hace
+# falta que se compile e instale. El problema es solo el mismo de siempre:
+# esa carpeta vieja nunca declara LOCAL_MODULE_TAGS, y el "user_tags.mk"
+# original solo perdona algunos nombres puntuales (ej. copybit.qsd8k), asi
+# que van saltando de a uno segun el orden en que "make" los va parseando.
 #
 # En vez de ir agregando nombres a mano cada vez que aparece un error nuevo,
 # parcheamos build/core/base_rules.mk para que perdone TODO lo que venga con
-# LOCAL_PATH bajo hardware/msm7k, ademas de lo que ya estaba perdonado por
-# nombre. Esto no cambia si esos modulos se instalan o no -- ninguno esta en
-# PRODUCT_PACKAGES de cooper, asi que nunca terminan en el system.img -- solo
-# evita que "make" aborte al parsear sus Android.mk.
+# LOCAL_PATH bajo hardware/msm7k o hardware/qcom, ademas de lo que ya estaba
+# perdonado por nombre. Para los modulos que Samsung no reemplaza (como el
+# GPS) esto simplemente permite que se instalen igual que antes. Para los que
+# SI reemplaza (audio, copybit, lights, gralloc) no cambia nada, porque esos
+# quedan fuera de PRODUCT_PACKAGES de cooper de cualquier forma.
 BR=build/core/base_rules.mk
 cp -n $BR $BR.orig
 python3 - "$BR" <<'PYEOF'
@@ -137,13 +137,13 @@ path = sys.argv[1]
 with open(path) as f:
     content = f.read()
 old = "  ifeq ($(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),)"
-new = "  ifeq ($(or $(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),$(filter hardware/msm7k%,$(LOCAL_PATH))),)"
+new = "  ifeq ($(or $(filter $(GRANDFATHERED_USER_MODULES),$(LOCAL_MODULE)),$(filter hardware/msm7k% hardware/qcom%,$(LOCAL_PATH))),)"
 n = content.count(old)
 if n == 1:
     content = content.replace(old, new, 1)
     with open(path, "w") as f:
         f.write(content)
-    print("    parche aplicado: hardware/msm7k queda exento del chequeo de tags")
+    print("    parche aplicado: hardware/msm7k y hardware/qcom quedan exentos del chequeo de tags")
 elif new in content:
     print("    ya estaba parcheado, no se toca")
 else:
