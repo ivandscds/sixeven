@@ -63,39 +63,24 @@ $(call inherit-product, $(SRC_TARGET_DIR)/product/languages_full.mk)
 $(call inherit-product, $(SRC_TARGET_DIR)/product/generic.mk)
 EOF
 
-echo ">>> 1/6  Agregando la variante de arquitectura armv6-vfp"
-# AOSP gingerbread solo trae armv4t, armv5te, armv5te-vfp, armv7-a y armv7-a-neon.
-# El Ace declara TARGET_ARCH_VARIANT := armv6-vfp, que lo agrego CyanogenMod.
-# Sin este archivo el build muere con "Cannot locate config makefile for
-# product arch variant armv6-vfp".
-cat > build/core/combo/arch/arm/armv6-vfp.mk <<'EOF'
-# Configuration for Linux on ARM.
-# Generating binaries for the ARMv6 architecture (arm1136jf-s) with VFP.
+echo ">>> 1/6  Cambiando TARGET_ARCH_VARIANT de armv6-vfp a armv5te-vfp"
+# El device tree de CM declara TARGET_ARCH_VARIANT := armv6-vfp (el ARM11 real
+# del Ace es ARMv6), pero esa variante no es oficial de AOSP: ni
+# build/core/combo/arch/arm/ ni dalvik/vm/mterp traen soporte para ella (el
+# interprete de Dalvik para armv6-vfp esta generado a mano en el fork de CM,
+# no existe en el dalvik real de Google -- error "No rule to make target
+# dalvik/vm/mterp/out/InterpAsm-armv6-vfp.S").
 #
-ARCH_ARM_HAVE_THUMB_SUPPORT     := true
-ARCH_ARM_HAVE_FAST_INTERWORKING := true
-ARCH_ARM_HAVE_64BIT_DATA        := true
-ARCH_ARM_HAVE_HALFWORD_MULTIPLY := true
-ARCH_ARM_HAVE_CLZ               := true
-ARCH_ARM_HAVE_FFS               := true
-ARCH_ARM_HAVE_VFP               := true
-
-ifeq ($(strip $(TARGET_ARCH_VARIANT_FPU)),)
-TARGET_ARCH_VARIANT_FPU         := vfp
-endif
-ifeq ($(strip $(TARGET_ARCH_VARIANT_CPU)),)
-TARGET_ARCH_VARIANT_CPU         := arm1136jf-s
-endif
-
-arch_variant_cflags := \
-    -mcpu=$(TARGET_ARCH_VARIANT_CPU) \
-    -mfloat-abi=softfp \
-    -mfpu=$(TARGET_ARCH_VARIANT_FPU) \
-    -D__ARM_ARCH_5__ \
-    -D__ARM_ARCH_5T__ \
-    -D__ARM_ARCH_5E__ \
-    -D__ARM_ARCH_5TE__
-EOF
+# La solucion mas simple: compilar como armv5te-vfp en su lugar. El codigo
+# ARMv5 corre bien en el ARM11/ARMv6 del Ace (es compatible hacia atras, solo
+# no usa instrucciones especificas de ARMv6), y armv5te-vfp SI es una
+# variante oficial soportada por AOSP puro (combo + dalvik/mterp la traen de
+# fabrica), asi que no hace falta agregar ningun archivo nuevo ni reemplazar
+# dalvik por el de CM.
+BC=device/samsung/cooper/BoardConfig.mk
+cp -n $BC $BC.orig
+sed -i 's/^TARGET_ARCH_VARIANT[[:space:]]*:=[[:space:]]*armv6-vfp/TARGET_ARCH_VARIANT := armv5te-vfp/' $BC
+grep -n "^TARGET_ARCH_VARIANT" $BC
 
 echo ">>> 2/6  Sacando paquetes que solo existen en CyanogenMod"
 # Estas apps/binarios viven en repos de CM (packages/apps/FM, Torch,
