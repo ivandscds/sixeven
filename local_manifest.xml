@@ -21,6 +21,21 @@
            remote="github"
            revision="gingerbread" />
 
+  <!-- hardware/libhardware_legacy de CyanogenMod en vez del de AOSP puro.
+       device/samsung/cooper/libaudio/AudioPolicyManager.cpp usa
+       STRATEGY_MEDIA_SONIFICATION del enum routing_strategy declarado en
+       hardware_legacy/AudioPolicyManagerBase.h. Esa constante existe en el
+       fork de CM (verificado) pero no en la version de AOSP puro sincronizada
+       por el manifest default en esta rama (error "was not declared in
+       this scope"). El device tree de cooper esta escrito contra el arbol de
+       CM en general, no contra AOSP puro, asi que reemplazamos este proyecto
+       igual que se hizo con dalvik. -->
+  <remove-project name="platform/hardware/libhardware_legacy" />
+  <project name="CyanogenMod/android_hardware_libhardware_legacy"
+           path="hardware/libhardware_legacy"
+           remote="github"
+           revision="gingerbread" />
+
   <!-- OPCIONAL: device/common de CM, por si el de AOSP no trae gps_eu_supl.mk.
        Descomentar SOLO si el build se queja de ese archivo. -->
   <!--
