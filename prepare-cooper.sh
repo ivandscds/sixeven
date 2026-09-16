@@ -3,6 +3,38 @@
 # Ejecutar desde la raiz del arbol AOSP, DESPUES de repo sync.
 set -e
 
+echo ">>> -1/6 Agregando -fpermissive para el compilador host"
+# GCC 4.6+ (el que trae Ubuntu 12.04, usado para compilar herramientas HOST
+# como aapt, dx, etc.) es mas estricto por defecto con la correccion de
+# "const" en C++ de lo que era GCC 4.4 (con el que se escribio este codigo
+# de 2010). Sin este flag el build corta en pleno frameworks/base con:
+#   RefBase.cpp:507:67: error: passing 'const android::RefBase::weakref_impl'
+#   as 'this' argument ... discards qualifiers [-fpermissive]
+# El propio error dice la solucion: agregar -fpermissive. Va en
+# HOST_GLOBAL_CPPFLAGS (no en CFLAGS) porque es una flag exclusiva de C++;
+# meterla en CFLAGS tira un warning inofensivo en cada archivo .c compilado.
+BR=build/core/combo/HOST_linux-x86.mk
+cp -n $BR $BR.orig
+python3 - "$BR" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+old = "HOST_GLOBAL_CFLAGS += -D_FORTIFY_SOURCE=0"
+new = old + "\n\nHOST_GLOBAL_CPPFLAGS += -fpermissive"
+if "HOST_GLOBAL_CPPFLAGS += -fpermissive" in content:
+    print("    ya estaba parcheado, no se toca")
+elif content.count(old) == 1:
+    content = content.replace(old, new, 1)
+    with open(path, "w") as f:
+        f.write(content)
+    print("    agregado -fpermissive a HOST_GLOBAL_CPPFLAGS")
+else:
+    print("    ADVERTENCIA: no encontre el patron esperado en "
+          "build/core/combo/HOST_linux-x86.mk, revisar a mano", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+
 echo ">>> 0/6  Agregando build/target/product/full_base.mk"
 # device_cooper.mk hace: $(call inherit-product, $(SRC_TARGET_DIR)/product/full_base.mk)
 # Ese archivo NO existe en AOSP puro (build/target/product/ solo trae full.mk).
