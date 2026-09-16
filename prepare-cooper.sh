@@ -114,7 +114,7 @@ cp -n $BC $BC.orig
 sed -i 's/^TARGET_ARCH_VARIANT[[:space:]]*:=[[:space:]]*armv6-vfp/TARGET_ARCH_VARIANT := armv5te-vfp/' $BC
 grep -n "^TARGET_ARCH_VARIANT" $BC
 
-echo ">>> 2/6  Sacando paquetes que solo existen en CyanogenMod"
+echo ">>> 2/6  Sacando paquetes que solo existen en CyanogenMod, y arreglando el choque de macros de audio"
 # Estas apps/binarios viven en repos de CM (packages/apps/FM, Torch,
 # SamsungServiceMode, system/extras/rzscontrol). En AOSP puro no existen y el
 # build falla con "Module not defined".
@@ -125,6 +125,39 @@ for pkg in FM Torch rzscontrol SamsungServiceMode screencap; do
 done
 # BOARD_USE_SCREENCAP es un hook de CM, en AOSP no hace nada pero lo sacamos
 sed -i 's/^BOARD_USE_SCREENCAP/#BOARD_USE_SCREENCAP/' device/samsung/cooper/BoardConfig.mk
+
+# device/samsung/cooper/libaudio/AudioHardware.h define macros de C
+# (AGC_ENABLE, NS_ENABLE, TX_IIR_ENABLE -- flags del driver msm_audio) con
+# los MISMOS nombres que usa frameworks/base/include/media/AudioRecord.h
+# como valores de un enum scoped (AudioSystem::AGC_ENABLE). El preprocesador
+# de C++ no respeta el "::", asi que reemplaza el texto tal cual y rompe el
+# parseo con "expected unqualified-id before numeric constant" en cascada.
+# AudioHardware.cpp incluye "AudioHardware.h" ANTES que <media/AudioRecord.h>,
+# asi que las macros ya estan definidas cuando se procesa el enum. La
+# solucion es invertir el orden de esos dos includes (ninguno depende del
+# otro, verificado): asi AudioRecord.h se termina de procesar ANTES de que
+# AudioHardware.h contamine el namespace de macros.
+AH=device/samsung/cooper/libaudio/AudioHardware.cpp
+cp -n $AH $AH.orig
+python3 - "$AH" <<'PYEOF'
+import sys
+path = sys.argv[1]
+with open(path) as f:
+    content = f.read()
+old = '#include "AudioHardware.h"\n#include <media/AudioRecord.h>\n'
+new = '#include <media/AudioRecord.h>\n#include "AudioHardware.h"\n'
+if new in content:
+    print("    AudioHardware.cpp ya estaba parcheado, no se toca")
+elif content.count(old) == 1:
+    content = content.replace(old, new, 1)
+    with open(path, "w") as f:
+        f.write(content)
+    print("    invertido el orden de includes en AudioHardware.cpp")
+else:
+    print("    ADVERTENCIA: no encontre el patron esperado en "
+          f"{path}, revisar a mano", file=sys.stderr)
+    sys.exit(1)
+PYEOF
 
 echo ">>> 3/6  Silenciando el chequeo de tags para hardware/msm7k y hardware/qcom"
 # hardware/msm7k y hardware/qcom se sincronizan de arrastre porque el manifest
